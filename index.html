@@ -360,7 +360,7 @@ body.no-data .welcome{display:block}
   </div>
 </div>
 
-<script id="seed" type="application/json">{"periodo":"—","cols":["mes","vend","status","cliente","vf","cr","dev","cat","pedido","prod"],"rows":[]}</script>
+<script id="seed" type="application/json">{"periodo":"—","cols":["mes","vend","status","cliente","vf","cr","dev","cat","pedido","prod","coes"],"rows":[]}</script>
 <script>
 (function(){
   "use strict";
@@ -415,10 +415,20 @@ body.no-data .welcome{display:block}
     return v.toString().slice(0,7);
   }
 
+  // só conta como faturamento o que o Genesis marca como VENDA.
+  // Exclui quebra, remessas (brinde, reposição, transformação, empréstimo) e qualquer operação não-comercial.
+  function isVenda(r){
+    if(IDX.coes===undefined) return true;            // dados antigos sem a coluna: não filtra
+    const c=(r[IDX.coes]||"").toString().toUpperCase();
+    if(!c) return true;                              // linha sem COES: não exclui
+    return c.indexOf("VENDA")>-1;
+  }
+
   function rowsFiltradas(){
     const out = [];
     for(const r of RAW.rows){
       if(!statusAtivos.has(norm(r[IDX.status]))) continue;
+      if(!isVenda(r)) continue;
       if(mesAtivo!=="todos" && r[IDX.mes]!==mesAtivo) continue;
       out.push(r);
     }
@@ -465,6 +475,17 @@ body.no-data .welcome{display:block}
 
     document.getElementById("periodo").textContent = RAW.periodo || "—";
     document.getElementById("reg-count").textContent = rows.length.toLocaleString("pt-BR")+" registros no filtro";
+
+    // transparência: quanto saiu por não ser venda (quebra, remessas, etc.)
+    if(IDX.coes!==undefined){
+      let excl=0,exclN=0;
+      for(const r of RAW.rows){
+        if(statusAtivos.has(norm(r[IDX.status])) && !isVenda(r) && (mesAtivo==="todos"||r[IDX.mes]===mesAtivo)){ excl+=r[IDX.vf]; exclN++; }
+      }
+      document.getElementById("foot-rule").textContent = excl>0
+        ? ("não-vendas fora do faturamento: "+fmtK(excl)+" em "+exclN+" operações (quebra, brindes, remessas)")
+        : "só operações de VENDA entram no faturamento";
+    }
 
     // KPIs
     const fatLab = incluiCasa ? "Faturamento (empresa)" : "Faturamento (equipe)";
@@ -531,10 +552,10 @@ body.no-data .welcome{display:block}
       [{avg:mpctEquipe}]);
 
     // evolução mensal
-    const meses = [...new Set(RAW.rows.filter(r=>statusAtivos.has(norm(r[IDX.status]))).map(r=>r[IDX.mes]))].filter(Boolean).sort();
+    const meses = [...new Set(RAW.rows.filter(r=>statusAtivos.has(norm(r[IDX.status]))&&isVenda(r)).map(r=>r[IDX.mes]))].filter(Boolean).sort();
     const ds = vends.map(o=>{ const v=o.nome;
       const serie = meses.map(mes=>{
-        let s=0; for(const r of RAW.rows){ if(norm(r[IDX.vend])===v && r[IDX.mes]===mes && statusAtivos.has(norm(r[IDX.status]))) s+=r[IDX.vf]; }
+        let s=0; for(const r of RAW.rows){ if(norm(r[IDX.vend])===v && r[IDX.mes]===mes && statusAtivos.has(norm(r[IDX.status])) && isVenda(r)) s+=r[IDX.vf]; }
         return Math.round(s);
       });
       return {label:o.casa?"Casa":v.split(" ")[0],data:serie,borderColor:PAL[v],backgroundColor:PAL[v],borderDash:o.casa?[5,4]:[],tension:.3,borderWidth:2.4,pointRadius:3,pointHoverRadius:5};
@@ -626,7 +647,7 @@ body.no-data .welcome{display:block}
     });
   }
   function buildMeses(){
-    const meses=[...new Set(RAW.rows.filter(r=>statusAtivos.has(norm(r[IDX.status]))).map(r=>r[IDX.mes]))].filter(Boolean).sort();
+    const meses=[...new Set(RAW.rows.filter(r=>statusAtivos.has(norm(r[IDX.status]))&&isVenda(r)).map(r=>r[IDX.mes]))].filter(Boolean).sort();
     const sel=document.getElementById("mesSelect");
     const nm=["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
     sel.innerHTML='<option value="todos">Todos os meses</option>'+meses.map(m=>{const[y,mo]=m.split("-");return `<option value="${m}" ${m===mesAtivo?"selected":""}>${nm[+mo-1]}/${y}</option>`}).join("");
@@ -652,7 +673,7 @@ body.no-data .welcome{display:block}
         const kEmis=find(r0,"Emissão","Emissao"), kVend=find(r0,"Vendedor do Cliente","Vendedor"),
               kStat=find(r0,"Status"), kCli=find(r0,"Cliente"), kVf=find(r0,"Vlr. Final","Valor Final"),
               kCr=find(r0,"Custo Real"), kDev=find(r0,"Valor Devolvido"), kCat=find(r0,"Categoria"),
-              kPed=find(r0,"Pedido"), kProd=find(r0,"Produto","Descrição","Descricao");
+              kPed=find(r0,"Pedido"), kProd=find(r0,"Produto","Descrição","Descricao"), kCoes=find(r0,"COES","Natureza","Operação","Operacao");
         if(!kVf||!kCr||!kVend||!kStat) throw new Error("colunas essenciais não encontradas");
         const lixo = v => { const s=(v==null?"":v.toString().trim().toLowerCase()); return s===""||s==="nan"; };
         const rows=json
@@ -660,10 +681,10 @@ body.no-data .welcome{display:block}
           .map(r=>[ toMes(r[kEmis]), (r[kVend]||"").toString(), (r[kStat]||"").toString(),
           (r[kCli]||"").toString().slice(0,40), parseMoney(r[kVf]), parseMoney(r[kCr]),
           parseMoney(r[kDev]), (r[kCat]||"").toString().slice(0,30), (r[kPed]||"").toString(),
-          (kProd?(r[kProd]||"").toString().slice(0,48):"") ]);
+          (kProd?(r[kProd]||"").toString().slice(0,48):""), (kCoes?(r[kCoes]||"").toString().slice(0,45):"") ]);
         const meses=rows.map(x=>x[0]).filter(Boolean).sort();
         const per=meses.length?(meses[0]+" a "+meses[meses.length-1]):"—";
-        RAW={periodo:per,cols:["mes","vend","status","cliente","vf","cr","dev","cat","pedido","prod"],rows};
+        RAW={periodo:per,cols:["mes","vend","status","cliente","vf","cr","dev","cat","pedido","prod","coes"],rows};
         IDX={}; RAW.cols.forEach((c,i)=>IDX[c]=i);
         statusAtivos=new Set(CONF_DEFAULT); mesAtivo="todos";
         buildStatusChips(); buildMeses(); render();
