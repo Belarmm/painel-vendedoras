@@ -130,6 +130,9 @@ tbody tr:hover{background:rgba(255,255,255,.02)}
 .sem.aten{background:var(--warn);box-shadow:0 0 0 3px rgba(240,168,60,.16)}
 .mpct-crit{color:var(--neg);font-weight:700;font-family:'Archivo',sans-serif}
 .mpct-aten{color:var(--warn);font-weight:700;font-family:'Archivo',sans-serif}
+.cli-row{cursor:pointer}
+.cli-row:hover{background:rgba(61,214,196,.05)!important}
+.cli-row td .mpct-crit,.cli-row td .mpct-aten{white-space:nowrap}
 .empty{text-align:center;padding:30px;color:var(--muted2);font-size:13px}
 
 /* ---- casa ---- */
@@ -346,18 +349,18 @@ body.no-data .welcome{display:block}
     <div class="m-cbox"><canvas id="mChart"></canvas></div>
     <div class="m-grid">
       <div>
-        <div class="m-sec">Mix por categoria <span style="color:var(--muted2);font-weight:400">· margem %</span></div>
+        <div class="m-sec" id="mCatTitle">Mix por categoria <span style="color:var(--muted2);font-weight:400">· margem %</span></div>
         <div class="m-list" id="mCat"></div>
       </div>
       <div>
-        <div class="m-sec">Top clientes <span style="color:var(--muted2);font-weight:400">· margem %</span></div>
+        <div class="m-sec" id="mCliTitle">Top clientes <span style="color:var(--muted2);font-weight:400">· margem %</span></div>
         <div class="m-list" id="mCli"></div>
       </div>
     </div>
   </div>
 </div>
 
-<script id="seed" type="application/json">{"periodo":"—","cols":["mes","vend","status","cliente","vf","cr","dev","cat","pedido"],"rows":[]}</script>
+<script id="seed" type="application/json">{"periodo":"—","cols":["mes","vend","status","cliente","vf","cr","dev","cat","pedido","prod"],"rows":[]}</script>
 <script>
 (function(){
   "use strict";
@@ -583,24 +586,27 @@ body.no-data .welcome{display:block}
     const crit = lista.filter(x=>x.mpct<0);
     const aten = lista.filter(x=>x.mpct>=0);
     const presoFat = lista.reduce((s,x)=>s+x.fat,0);
+    const limPct=(limiar*100).toFixed(0);
     document.getElementById("margResumo").innerHTML =
+      `mostrando clientes com margem <b>abaixo de ${limPct}%</b> · `+
       `<span class="crit">● ${crit.length} crítico${crit.length!=1?"s":""}</span> · `+
       `<span class="aten">● ${aten.length} em atenção</span> · `+
-      `<b>${fmtK(presoFat)}</b> de faturamento abaixo do piso`;
+      `<b>${fmtK(presoFat)}</b> em jogo`;
 
     const body = document.getElementById("alertBody");
     if(!lista.length){ body.innerHTML = `<tr><td colspan="6" class="empty">Nenhum cliente abaixo de ${(limiar*100).toFixed(0)}% no filtro atual. ✓</td></tr>`; return; }
     body.innerHTML = lista.map(x=>{
       const cls = x.mpct<0?"crit":"aten";
-      return `<tr>
+      return `<tr class="cli-row" data-cli="${x.cli.replace(/"/g,'&quot;')}">
         <td><span class="sem ${cls}"></span></td>
         <td><b>${x.cli}</b></td>
         <td><span class="tag">${x.vend}</span></td>
         <td class="r tnum">${fmtBRL(x.fat)}</td>
         <td class="r tnum">${x.marg<0?"−":""}${fmtBRL(Math.abs(x.marg))}</td>
-        <td class="r"><span class="mpct-${cls} tnum">${fmtPct(x.mpct)}</span></td>
+        <td class="r"><span class="mpct-${cls} tnum">${fmtPct(x.mpct)} ›</span></td>
       </tr>`;
     }).join("");
+    body.querySelectorAll(".cli-row").forEach(tr=>tr.onclick=()=>openCliente(tr.dataset.cli));
   }
 
   // ---- filtros UI ----
@@ -645,17 +651,19 @@ body.no-data .welcome{display:block}
         const r0=json[0];
         const kEmis=find(r0,"Emissão","Emissao"), kVend=find(r0,"Vendedor do Cliente","Vendedor"),
               kStat=find(r0,"Status"), kCli=find(r0,"Cliente"), kVf=find(r0,"Vlr. Final","Valor Final"),
-              kCr=find(r0,"Custo Real"), kDev=find(r0,"Valor Devolvido"), kCat=find(r0,"Categoria"), kPed=find(r0,"Pedido");
+              kCr=find(r0,"Custo Real"), kDev=find(r0,"Valor Devolvido"), kCat=find(r0,"Categoria"),
+              kPed=find(r0,"Pedido"), kProd=find(r0,"Produto","Descrição","Descricao");
         if(!kVf||!kCr||!kVend||!kStat) throw new Error("colunas essenciais não encontradas");
         const lixo = v => { const s=(v==null?"":v.toString().trim().toLowerCase()); return s===""||s==="nan"; };
         const rows=json
           .filter(r=> !lixo(r[kStat]) && !lixo(r[kPed]) && !lixo(r[kVend]))   // descarta totalizações/rodapés do Genesis
           .map(r=>[ toMes(r[kEmis]), (r[kVend]||"").toString(), (r[kStat]||"").toString(),
           (r[kCli]||"").toString().slice(0,40), parseMoney(r[kVf]), parseMoney(r[kCr]),
-          parseMoney(r[kDev]), (r[kCat]||"").toString().slice(0,30), (r[kPed]||"").toString() ]);
+          parseMoney(r[kDev]), (r[kCat]||"").toString().slice(0,30), (r[kPed]||"").toString(),
+          (kProd?(r[kProd]||"").toString().slice(0,48):"") ]);
         const meses=rows.map(x=>x[0]).filter(Boolean).sort();
         const per=meses.length?(meses[0]+" a "+meses[meses.length-1]):"—";
-        RAW={periodo:per,cols:["mes","vend","status","cliente","vf","cr","dev","cat","pedido"],rows};
+        RAW={periodo:per,cols:["mes","vend","status","cliente","vf","cr","dev","cat","pedido","prod"],rows};
         IDX={}; RAW.cols.forEach((c,i)=>IDX[c]=i);
         statusAtivos=new Set(CONF_DEFAULT); mesAtivo="todos";
         buildStatusChips(); buildMeses(); render();
@@ -718,6 +726,8 @@ body.no-data .welcome{display:block}
       <div class="m-kpi"><div class="l">Devoluções</div><div class="v ${dev>0?'warn':''}">${fmtK(dev)}</div></div>`;
 
     // mix por categoria
+    document.getElementById("mCatTitle").innerHTML='Mix por categoria <span style="color:var(--muted2);font-weight:400">· margem %</span>';
+    document.getElementById("mCliTitle").innerHTML='Top clientes <span style="color:var(--muted2);font-weight:400">· margem %</span>';
     const catArr=Object.entries(cats).map(([n,o])=>({n,f:o.f,mp:o.f>0?(o.f-o.c)/o.f*100:0})).sort((a,b)=>b.f-a.f).slice(0,6);
     document.getElementById("mCat").innerHTML=catArr.map(x=>{
       const cls=x.mp<0?"neg":(x.mp<20?"warn":"pos");
@@ -738,6 +748,55 @@ body.no-data .welcome{display:block}
     mChart=new Chart(document.getElementById("mChart"),{type:"line",
       data:{labels:meses.map(m=>{const[y,mo]=m.split("-");return nm[+mo-1]+"/"+y.slice(2)}),
         datasets:[{data:meses.map(m=>Math.round(mesMap[m])),borderColor:PAL[nome]||"#3dd6c4",backgroundColor:(PAL[nome]||"#3dd6c4")+"22",fill:true,tension:.3,borderWidth:2.4,pointRadius:3}]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmtBRL(c.raw)}}},
+        scales:{y:{grid:{color:"rgba(255,255,255,.05)"},ticks:{callback:v=>fmtK(v)}},x:{grid:{display:false}}}}});
+
+    document.getElementById("modalBg").classList.add("open");
+  }
+  function openCliente(nome){
+    const rows=rowsFiltradas().filter(r=>r[IDX.cliente]===nome && VEND_REAIS.includes(norm(r[IDX.vend])));
+    if(!rows.length) return;
+    const hasProd = IDX.prod!==undefined;
+    let fat=0,custo=0; const peds={},vendCount={},mesMap={},itens=[];
+    for(const r of rows){
+      fat+=r[IDX.vf]; custo+=r[IDX.cr];
+      const pd=r[IDX.pedido]; (peds[pd]=peds[pd]||{f:0,c:0}); peds[pd].f+=r[IDX.vf]; peds[pd].c+=r[IDX.cr];
+      const vd=norm(r[IDX.vend]); vendCount[vd]=(vendCount[vd]||0)+r[IDX.vf];
+      const ms=r[IDX.mes]; if(ms) mesMap[ms]=(mesMap[ms]||0)+r[IDX.vf];
+      const nm=(hasProd && r[IDX.prod])?r[IDX.prod]:(r[IDX.cat]||"—");
+      itens.push({nm,ped:pd,vf:r[IDX.vf],cr:r[IDX.cr],mp:r[IDX.vf]>0?(r[IDX.vf]-r[IDX.cr])/r[IDX.vf]*100:0});
+    }
+    const marg=fat-custo, mpct=fat>0?marg/fat*100:0, lim=limiar*100;
+    const cor=v=> v<0?"var(--neg)":(v<lim?"var(--warn)":"var(--pos)");
+    const cls=v=> v<0?"neg":(v<lim?"warn":"pos");
+    const vendTop=Object.entries(vendCount).sort((a,b)=>b[1]-a[1])[0][0].split(" ")[0];
+    const nPed=Object.keys(peds).length;
+
+    document.getElementById("mName").innerHTML=`<span style="width:11px;height:11px;border-radius:50%;background:${cor(mpct)}"></span>${nome}`;
+    document.getElementById("mSub").textContent="Cliente · "+nPed+" pedido"+(nPed!=1?"s":"")+" · "+rows.length+" itens · vendedora "+vendTop+(mesAtivo!=="todos"?(" · "+mesAtivo):"");
+    document.getElementById("mKpis").innerHTML=`
+      <div class="m-kpi"><div class="l">Faturamento</div><div class="v">${fmtBRL(fat)}</div></div>
+      <div class="m-kpi"><div class="l">Margem %</div><div class="v ${cls(mpct)}">${fmtPct(mpct)}</div></div>
+      <div class="m-kpi"><div class="l">Margem R$</div><div class="v">${fmtBRL(marg)}</div></div>
+      <div class="m-kpi"><div class="l">Pedidos</div><div class="v">${nPed}</div></div>`;
+
+    document.getElementById("mCatTitle").innerHTML='Itens que puxaram a margem <span style="color:var(--muted2);font-weight:400">· piores primeiro</span>';
+    document.getElementById("mCliTitle").innerHTML='Por pedido <span style="color:var(--muted2);font-weight:400">· margem %</span>';
+    const piores=itens.slice().sort((a,b)=>a.mp-b.mp).slice(0,12);
+    document.getElementById("mCat").innerHTML=piores.map(x=>
+      `<div class="m-row"><span class="nm">${x.nm}<br><span style="font-size:10px;color:var(--muted2)">ped ${x.ped} · ${fmtBRL(x.vf)}</span></span><span class="vl"></span><span class="mp ${cls(x.mp)}">${fmtPct(x.mp)}</span></div>`
+    ).join("")||'<div class="m-row"><span class="nm">—</span></div>';
+    const pedArr=Object.entries(peds).map(([n,o])=>({n,f:o.f,mp:o.f>0?(o.f-o.c)/o.f*100:0})).sort((a,b)=>a.mp-b.mp).slice(0,12);
+    document.getElementById("mCli").innerHTML=pedArr.map(x=>
+      `<div class="m-row"><span class="nm">Pedido ${x.n}</span><span class="vl">${fmtBRL(x.f)}</span><span class="mp ${cls(x.mp)}">${fmtPct(x.mp)}</span></div>`
+    ).join("")||'<div class="m-row"><span class="nm">—</span></div>';
+
+    const meses=Object.keys(mesMap).sort();
+    const nm=["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
+    if(mChart) mChart.destroy();
+    mChart=new Chart(document.getElementById("mChart"),{type:"line",
+      data:{labels:meses.map(m=>{const[y,mo]=m.split("-");return nm[+mo-1]+"/"+y.slice(2)}),
+        datasets:[{data:meses.map(m=>Math.round(mesMap[m])),borderColor:cor(mpct),backgroundColor:cor(mpct)+"22",fill:true,tension:.3,borderWidth:2.4,pointRadius:3}]},
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmtBRL(c.raw)}}},
         scales:{y:{grid:{color:"rgba(255,255,255,.05)"},ticks:{callback:v=>fmtK(v)}},x:{grid:{display:false}}}}});
 
